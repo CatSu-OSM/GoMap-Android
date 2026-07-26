@@ -1092,7 +1092,7 @@ private fun HeadingAccuracyIndicator(
     accuracyDegrees: Float
 ) {
     val density = LocalDensity.current
-    val radius = with(density) { 92.dp.toPx() }
+    val radius = with(density) { 46.dp.toPx() }
     val puckRadius = with(density) { 10.dp.toPx() }
     val accuracy = accuracyDegrees.coerceIn(8f, 180f)
     Canvas(
