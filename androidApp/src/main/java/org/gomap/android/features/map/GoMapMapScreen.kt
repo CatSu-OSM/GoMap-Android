@@ -2522,7 +2522,17 @@ private fun syncDraftNode(style: Style, state: MapUiState) {
     val source = style.getSourceAs<GeoJsonSource>(DraftNodeSourceId) ?: return
     source.setGeoJson(
         state.draftNode?.let { draft ->
-            FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(draft.coordinate.longitude, draft.coordinate.latitude)))
+            FeatureCollection.fromFeature(
+                Feature.fromGeometry(
+                    Point.fromLngLat(draft.coordinate.longitude, draft.coordinate.latitude)
+                ).apply {
+                    addStringProperty("element_kind", "draft")
+                    addStringProperty("element_id", draft.id)
+                    addStringProperty("title", "Draft node")
+                    addStringProperty("subtitle", "Not uploaded yet")
+                    draft.tags.forEach { (key, value) -> addStringProperty("tag_$key", value) }
+                }
+            )
         } ?: emptyFeatureCollection()
     )
 }
@@ -2689,7 +2699,8 @@ private fun queryFeatureAtTap(
         screenPoint.x + hitRadiusPx,
         screenPoint.y + hitRadiusPx
     )
-    val match = map.queryRenderedFeatures(hitBox, DownloadedNodesLayerId).firstOrNull()
+    val match = map.queryRenderedFeatures(hitBox, DraftNodeLayerId).firstOrNull()
+        ?: map.queryRenderedFeatures(hitBox, DownloadedNodesLayerId).firstOrNull()
         ?: map.queryRenderedFeatures(hitBox, DownloadedAreasLayerId)
             .firstOrNull(::hasSelectableTitle)
         ?: map.queryRenderedFeatures(hitBox, DownloadedRoadsLayerId)

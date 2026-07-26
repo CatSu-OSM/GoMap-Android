@@ -30,6 +30,11 @@ not ready for production OpenStreetMap editing.
   Restrictions, and Object Filters are present for interface parity but remain
   intentionally inactive until their backing data and storage systems exist.
 
+### Fixed
+
+- Draft nodes can be selected again after tapping elsewhere to dismiss their
+  selection, including when they overlap downloaded OpenStreetMap geometry.
+
 ## [0.1.0-alpha.2] - 2026-07-25
 
 ### Changed
