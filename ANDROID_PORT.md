@@ -6,8 +6,9 @@ inspired by Go Map!!.
 ## Implemented
 
 - MapLibre map surface with OpenStreetMap raster and Esri aerial imagery
-- Runtime location permission, live fused-location updates, accuracy display,
-  last-known-location fallback, and compass-oriented bearing
+- Runtime location permission and a clearly indicated on/off control for live
+  fused-location updates, accuracy display, last-known-location fallback, and
+  compass-oriented bearing
 - Current-viewport download through the OpenStreetMap map API
 - OSM XML parsing into Kotlin node, way, and relation models
 - Rendering and selection of downloaded nodes and ways with separate point,

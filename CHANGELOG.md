@@ -5,6 +5,19 @@ All notable changes to this experimental Android port are documented here.
 The project follows semantic versioning with prerelease identifiers while it is
 not ready for production OpenStreetMap editing.
 
+## [0.1.0-alpha.2] - 2026-07-25
+
+### Changed
+
+- The location arrow now toggles the app's live GPS/location component instead
+  of only recentering the map.
+- Turning location off stops provider updates and hides the location puck and
+  accuracy radius.
+- Turning location on restarts live updates and recenters on the best available
+  fix.
+- The location arrow is outline-only while off and filled blue while on, with
+  matching accessibility descriptions for both states.
+
 ## [0.1.0-alpha.1] - 2026-07-25
 
 ### Added

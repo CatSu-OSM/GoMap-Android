@@ -81,6 +81,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -237,6 +239,7 @@ fun GoMapMapScreen(
     }
     var mapReady by remember { mutableStateOf(false) }
     var aerialEnabled by remember { mutableStateOf(true) }
+    var locationTrackingEnabled by remember { mutableStateOf(hasLocationPermission) }
     var initialViewportRequested by remember { mutableStateOf(false) }
     var selectionScreenPoint by remember { mutableStateOf<PointF?>(null) }
     var selectionScreenGeometry by remember { mutableStateOf<List<PointF>>(emptyList()) }
@@ -304,11 +307,24 @@ fun GoMapMapScreen(
         }
     }
 
-    LaunchedEffect(mapReady, hasLocationPermission) {
+    LaunchedEffect(hasLocationPermission) {
+        if (!hasLocationPermission) {
+            locationTrackingEnabled = false
+        } else {
+            locationTrackingEnabled = true
+        }
+    }
+
+    LaunchedEffect(mapReady, hasLocationPermission, locationTrackingEnabled) {
         if (!mapReady) return@LaunchedEffect
         mapView.getMapAsync { map ->
             map.getStyle { style ->
-                syncLocationComponent(context, map, style, hasLocationPermission)
+                syncLocationComponent(
+                    context,
+                    map,
+                    style,
+                    hasLocationPermission && locationTrackingEnabled
+                )
             }
         }
     }
@@ -321,7 +337,12 @@ fun GoMapMapScreen(
                 syncDraftNode(style, state)
                 syncDownloadedData(style, state.downloadedData)
                 syncSelection(style, state.selectedFeature)
-                syncLocationComponent(context, map, style, hasLocationPermission)
+                syncLocationComponent(
+                    context,
+                    map,
+                    style,
+                    hasLocationPermission && locationTrackingEnabled
+                )
             }
         }
     }
@@ -347,7 +368,12 @@ fun GoMapMapScreen(
                         map.uiSettings.isCompassEnabled = false
                         map.setStyle(Style.Builder().fromUri(AerialStyle)) { style ->
                             installOverlayLayers(style)
-                            syncLocationComponent(context, map, style, hasLocationPermission)
+                            syncLocationComponent(
+                                context,
+                                map,
+                                style,
+                                hasLocationPermission && locationTrackingEnabled
+                            )
                             mapReady = true
                         }
                         map.addOnMapLongClickListener { latLng ->
@@ -426,7 +452,17 @@ fun GoMapMapScreen(
                 }
             }
             NavigationControl(
-                onClick = if (hasLocationPermission) onCenterOnUser else onGrantLocation
+                active = hasLocationPermission && locationTrackingEnabled,
+                onClick = {
+                    if (!hasLocationPermission) {
+                        onGrantLocation()
+                    } else {
+                        locationTrackingEnabled = !locationTrackingEnabled
+                        if (locationTrackingEnabled) {
+                            onCenterOnUser()
+                        }
+                    }
+                }
             )
         }
 
@@ -658,9 +694,19 @@ private fun MapControl(
 }
 
 @Composable
-private fun NavigationControl(onClick: () -> Unit) {
+private fun NavigationControl(active: Boolean, onClick: () -> Unit) {
     RoundControl(size = 48.dp, onClick = onClick) {
-        Canvas(modifier = Modifier.size(29.dp)) {
+        Canvas(
+            modifier = Modifier
+                .size(29.dp)
+                .semantics {
+                    contentDescription = if (active) {
+                        "Disable GPS location"
+                    } else {
+                        "Enable GPS location"
+                    }
+                }
+        ) {
             val arrow = Path().apply {
                 moveTo(size.width * 0.18f, size.height * 0.82f)
                 lineTo(size.width * 0.48f, size.height * 0.10f)
@@ -668,8 +714,14 @@ private fun NavigationControl(onClick: () -> Unit) {
                 lineTo(size.width * 0.53f, size.height * 0.64f)
                 close()
             }
-            drawPath(arrow, Color(0xB0000000), style = Stroke(width = 6f))
-            drawPath(arrow, Color(0xFF13B7F4), style = Stroke(width = 3.2f))
+            if (active) {
+                drawPath(arrow, Color(0xB0000000), style = Stroke(width = 6f))
+                drawPath(arrow, Color(0xFF13B7F4))
+                drawPath(arrow, Color.White.copy(alpha = 0.75f), style = Stroke(width = 1.2f))
+            } else {
+                drawPath(arrow, Color(0xB0000000), style = Stroke(width = 6f))
+                drawPath(arrow, Color(0xFF13B7F4), style = Stroke(width = 3.2f))
+            }
         }
     }
 }

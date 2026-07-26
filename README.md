@@ -16,7 +16,7 @@ The project preserves the upstream ISC license and attribution.
 
 - Native Kotlin and Jetpack Compose interface backed by MapLibre Native
 - Esri aerial imagery and OpenStreetMap raster styles
-- Live location puck, accuracy radius, and compass-oriented bearing
+- Toggleable live location puck, accuracy radius, and compass-oriented bearing
 - OpenStreetMap viewport downloads with styled roads, buildings, addresses,
   and points of interest
 - Accurate node and way selection with highlighted geometry and generous touch
