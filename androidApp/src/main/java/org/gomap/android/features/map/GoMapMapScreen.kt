@@ -108,11 +108,14 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.coroutines.resume
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.StateFlow
 import org.gomap.android.osm.BoundingBox
 import org.gomap.android.osm.LatLon
@@ -336,13 +339,16 @@ fun GoMapMapScreen(
 
     LaunchedEffect(mapReady, state.draftNode, state.downloadedData) {
         if (!mapReady) return@LaunchedEffect
-        mapView.getMapAsync { map ->
-            map.getStyle { style ->
-                syncDraftNode(style, state)
-                syncDownloadedData(style, state.downloadedData)
-                clearDragPreview(style)
-                isDraggingFeature = false
-            }
+        val map = mapController ?: return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        syncDraftNode(style, state)
+        syncDownloadedData(style, state.downloadedData)
+        if (isDraggingFeature) {
+            awaitRenderedMapFrames(mapView, count = 2)
+            map.style?.let(::clearDragPreview)
+            isDraggingFeature = false
+        } else {
+            clearDragPreview(style)
         }
     }
 
@@ -3451,6 +3457,35 @@ private fun hideDraggedFeature(style: Style, feature: SelectedFeature) {
     style.getLayerAs<SymbolLayer>(DownloadedLabelsLayerId)?.setFilter(
         Expression.all(Expression.has("label"), differentElement)
     )
+}
+
+private suspend fun awaitRenderedMapFrames(
+    mapView: MapView,
+    count: Int
+) {
+    withTimeoutOrNull(500L) {
+        suspendCancellableCoroutine { continuation ->
+            var renderedFrames = 0
+            val listener = object : MapView.OnDidFinishRenderingFrameListener {
+                override fun onDidFinishRenderingFrame(
+                    fully: Boolean,
+                    frameEncodingTime: Double,
+                    frameRenderingTime: Double
+                ) {
+                    if (!fully) return
+                    renderedFrames += 1
+                    if (renderedFrames >= count && continuation.isActive) {
+                        mapView.removeOnDidFinishRenderingFrameListener(this)
+                        continuation.resume(Unit)
+                    }
+                }
+            }
+            mapView.addOnDidFinishRenderingFrameListener(listener)
+            continuation.invokeOnCancellation {
+                mapView.removeOnDidFinishRenderingFrameListener(listener)
+            }
+        }
+    }
 }
 
 private fun clearDragPreview(style: Style) {

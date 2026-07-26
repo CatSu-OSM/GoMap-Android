@@ -54,7 +54,9 @@ not ready for production OpenStreetMap editing.
 - Moving an object no longer rebuilds every downloaded OSM layer for each
   pointer event; a same-frame editor preview keeps the visible map geometry
   synchronized exactly with its drag handle and commits the complete geographic
-  data once when released.
+  data once when released. The preview remains visible until MapLibre confirms
+  the updated native geometry has rendered, preventing a flash of the old
+  position after release.
 - The custom compass now follows the map's continuous bearing, and location
   heading animation is rendered at up to 60 frames per second.
 
