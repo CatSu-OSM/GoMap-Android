@@ -23,6 +23,8 @@ inspired by Go Map!!.
   miscellaneous, and advanced sections
 - Go Map-inspired Display sheet with editor/aerial/basemap combinations,
   plus-button placement, and rotation controls
+- Foreground GPX recording with persistent active/previous tracks, map
+  visibility control, retention, deletion, and GPX file sharing
 - Common Tags and All Tags editor sheets
 - iD Tagging Schema presets, Temaki/Maki icons, and US/global Name Suggestion
   Index entries
@@ -46,8 +48,8 @@ inspired by Go Map!!.
    validation
 4. OAuth 2 sign-in, changeset review, conflict detection, conflict resolution,
    and upload
-5. OSM notes, quests, imagery alignment controls, GPX, offline support, and
-   translations
+5. OSM notes, quests, imagery alignment controls, background GPX collection,
+   offline support, and translations
 6. Instrumented UI coverage, accessibility review, performance profiling, and
    production signing
 

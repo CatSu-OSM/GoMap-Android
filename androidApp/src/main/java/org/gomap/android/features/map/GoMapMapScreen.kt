@@ -2,6 +2,7 @@ package org.gomap.android.features.map
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.PointF
 import android.graphics.RectF
 import android.location.LocationManager
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -92,11 +95,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.gson.JsonElement
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -108,6 +116,10 @@ import org.gomap.android.osm.OsmMapData
 import org.gomap.android.osm.OsmWay
 import org.gomap.android.osm.SelectedFeature
 import org.gomap.android.osm.SelectionGeometry
+import org.gomap.android.features.gpx.GpxRetention
+import org.gomap.android.features.gpx.GpxTrack
+import org.gomap.android.features.gpx.GpxTrackRepository
+import org.gomap.android.features.gpx.GpxTrackState
 import org.gomap.android.features.presets.PresetCatalog
 import org.gomap.android.features.presets.PresetCategory
 import org.gomap.android.features.presets.PresetIcon
@@ -177,6 +189,10 @@ private const val SelectedLineLayerId = "selected-line-layer"
 private const val SelectedDirectionLayerId = "selected-direction-layer"
 private const val SelectedVerticesLayerId = "selected-vertices-layer"
 private const val SelectedPointLayerId = "selected-point-layer"
+private const val GpxPreviousSourceId = "gpx-previous-source"
+private const val GpxPreviousLayerId = "gpx-previous-layer"
+private const val GpxActiveSourceId = "gpx-active-source"
+private const val GpxActiveLayerId = "gpx-active-layer"
 private val Glass = Color(0xA34E514B)
 private val EditorPink = Color(0xFFFF9A9F)
 
@@ -244,6 +260,8 @@ fun GoMapMapScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val gpxRepository = remember { GpxTrackRepository.get(context) }
+    val gpxState by gpxRepository.state.collectAsStateWithLifecycle()
     val mapView = remember {
         MapView(context).apply {
             layoutParams = android.view.ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
@@ -265,17 +283,25 @@ fun GoMapMapScreen(
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showDisplay by remember { mutableStateOf(false) }
+    var showGpxTracks by remember { mutableStateOf(false) }
+    var gpxTracksVisible by remember { mutableStateOf(true) }
     val selectionHitRadiusPx = context.resources.displayMetrics.density * 16f
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
 
-    DisposableEffect(lifecycleOwner, mapView) {
+    DisposableEffect(lifecycleOwner, mapView, gpxRepository, hasLocationPermission) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_START -> {
+                    mapView.onStart()
+                    gpxRepository.resumeForegroundCollection(hasLocationPermission)
+                }
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_STOP -> {
+                    gpxRepository.pauseForegroundCollection()
+                    mapView.onStop()
+                }
                 Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
                 else -> Unit
             }
@@ -304,6 +330,21 @@ fun GoMapMapScreen(
             map.getStyle { style ->
                 syncDraftNode(style, state)
                 syncDownloadedData(style, state.downloadedData)
+            }
+        }
+    }
+
+    LaunchedEffect(
+        mapReady,
+        gpxTracksVisible,
+        gpxState.activeTrack,
+        gpxState.previousTracks
+    ) {
+        if (!mapReady) return@LaunchedEffect
+        mapView.getMapAsync { map ->
+            map.getStyle { style ->
+                installGpxLayers(style)
+                syncGpxTracks(style, gpxState, gpxTracksVisible)
             }
         }
     }
@@ -363,6 +404,8 @@ fun GoMapMapScreen(
                     syncDownloadedData(style, state.downloadedData)
                     syncSelection(style, state.selectedFeature)
                 }
+                installGpxLayers(style)
+                syncGpxTracks(style, gpxState, gpxTracksVisible)
                 syncLocationComponent(
                     context,
                     map,
@@ -404,6 +447,8 @@ fun GoMapMapScreen(
                         map.uiSettings.isCompassEnabled = false
                         map.setStyle(Style.Builder().fromUri(AerialStyle)) { style ->
                             installOverlayLayers(style)
+                            installGpxLayers(style)
+                            syncGpxTracks(style, gpxState, gpxTracksVisible)
                             syncLocationComponent(
                                 context,
                                 map,
@@ -665,7 +710,26 @@ fun GoMapMapScreen(
                 onBackgroundModeChanged = { backgroundMode = it },
                 onPlusButtonSideChanged = { plusButtonOnRight = it },
                 onMapRotationChanged = { mapRotationEnabled = it },
+                gpxTracksVisible = gpxTracksVisible,
+                onGpxTracksVisibleChanged = { gpxTracksVisible = it },
+                onOpenGpxTracks = {
+                    showDisplay = false
+                    showGpxTracks = true
+                },
                 onDismiss = { showDisplay = false }
+            )
+        }
+
+        if (showGpxTracks) {
+            GpxTracksSheet(
+                state = gpxState,
+                hasLocationPermission = hasLocationPermission,
+                repository = gpxRepository,
+                onRequestLocationPermission = onGrantLocation,
+                onBack = {
+                    showGpxTracks = false
+                    showDisplay = true
+                }
             )
         }
     }
@@ -1435,9 +1499,12 @@ private fun DisplaySheet(
     backgroundMode: MapBackgroundMode,
     plusButtonOnRight: Boolean,
     mapRotationEnabled: Boolean,
+    gpxTracksVisible: Boolean,
     onBackgroundModeChanged: (MapBackgroundMode) -> Unit,
     onPlusButtonSideChanged: (Boolean) -> Unit,
     onMapRotationChanged: (Boolean) -> Unit,
+    onGpxTracksVisibleChanged: (Boolean) -> Unit,
+    onOpenGpxTracks: () -> Unit,
     onDismiss: () -> Unit
 ) {
     BackHandler(onBack = onDismiss)
@@ -1503,7 +1570,12 @@ private fun DisplaySheet(
 
                 SettingsSectionHeader("Overlays")
                 SettingsGroup {
-                    DisplayToggleRow(title = "GPX Tracks", checked = true)
+                    DisplayToggleNavigationRow(
+                        title = "GPX Tracks",
+                        checked = gpxTracksVisible,
+                        onCheckedChange = onGpxTracksVisibleChanged,
+                        onOpen = onOpenGpxTracks
+                    )
                     SettingsDivider()
                     DisplayToggleRow(title = "Data Overlays", checked = false)
                     SettingsDivider()
@@ -1536,6 +1608,55 @@ private fun DisplaySheet(
                 }
                 Spacer(Modifier.height(24.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun DisplayToggleNavigationRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    onOpen: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .semantics {
+                contentDescription = "$title, ${if (checked) "On" else "Off"}"
+            },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(onClick = onOpen)
+                .padding(start = 15.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Text(
+                title,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Box(
+            modifier = Modifier
+                .clickable { onCheckedChange(!checked) }
+                .padding(4.dp)
+        ) {
+            DisplaySwitch(checked = checked)
+        }
+        IconButton(onClick = onOpen) {
+            Icon(
+                Icons.Outlined.ChevronRight,
+                contentDescription = "Open $title settings",
+                tint = Color(0xFF636366),
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }
@@ -1677,6 +1798,342 @@ private fun DisplaySwitch(checked: Boolean) {
                 .size(24.dp)
                 .background(Color.White, CircleShape)
         )
+    }
+}
+
+@Composable
+private fun GpxTracksSheet(
+    state: GpxTrackState,
+    hasLocationPermission: Boolean,
+    repository: GpxTrackRepository,
+    onRequestLocationPermission: () -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf(false) }
+    var choosingRetention by remember { mutableStateOf(false) }
+    var startAfterPermission by remember { mutableStateOf(false) }
+
+    LaunchedEffect(hasLocationPermission, startAfterPermission) {
+        if (hasLocationPermission && startAfterPermission) {
+            repository.startRecording(true)
+            startAfterPermission = false
+        }
+    }
+
+    BackHandler {
+        if (choosingRetention) choosingRetention = false else onBack()
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 58.dp, bottom = 7.dp)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Final).changes.forEach { change ->
+                            if (!change.isConsumed) change.consume()
+                        }
+                    }
+                }
+            },
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(34.dp),
+        shadowElevation = 16.dp
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().height(86.dp)) {
+                EditorHeaderButton(
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    description = if (choosingRetention) {
+                        "Back to GPX tracks"
+                    } else {
+                        "Back to display options"
+                    },
+                    onClick = {
+                        if (choosingRetention) choosingRetention = false else onBack()
+                    },
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)
+                )
+                Text(
+                    if (choosingRetention) "Delete tracks after" else "GPX Tracks",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (!choosingRetention) {
+                    Surface(
+                        onClick = { editing = !editing },
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 16.dp)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color(0xFF3A3A3C),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            Color.White.copy(alpha = 0.10f)
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(horizontal = 17.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (editing) "Done" else "Edit",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (choosingRetention) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    SettingsGroup {
+                        GpxRetention.entries.forEachIndexed { index, retention ->
+                            DisplayChoiceRow(
+                                title = retention.displayName,
+                                value = null,
+                                selected = state.retention == retention,
+                                onClick = {
+                                    repository.setRetention(retention)
+                                    choosingRetention = false
+                                }
+                            )
+                            if (index != GpxRetention.entries.lastIndex) SettingsDivider()
+                        }
+                    }
+                }
+                return@Surface
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                SettingsSectionHeader("Configure")
+                SettingsGroup {
+                    DisplayNavigationRow(
+                        title = "Delete tracks after:",
+                        value = state.retention.displayName,
+                        onClick = { choosingRetention = true }
+                    )
+                    SettingsDivider()
+                    DisplayToggleRow(
+                        title = "Collect in background:",
+                        checked = false,
+                        showChevron = false
+                    )
+                }
+
+                SettingsSectionHeader("Current Track")
+                SettingsGroup {
+                    CurrentGpxTrackRow(
+                        track = state.activeTrack,
+                        collecting = state.isCollecting,
+                        onClick = {
+                            if (state.activeTrack == null) {
+                                if (hasLocationPermission) {
+                                    repository.startRecording(true)
+                                } else {
+                                    startAfterPermission = true
+                                    onRequestLocationPermission()
+                                }
+                            } else {
+                                repository.stopRecording()
+                            }
+                        }
+                    )
+                }
+                Text(
+                    "A GPX Track records your path as you travel along a road or trail. " +
+                        "Recording pauses when the app leaves the foreground.",
+                    modifier = Modifier.padding(horizontal = 15.dp, vertical = 10.dp),
+                    color = Color(0xFF8E8E93),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+
+                SettingsSectionHeader("Previous Tracks")
+                SettingsGroup {
+                    if (state.previousTracks.isEmpty()) {
+                        Text(
+                            "No previous tracks",
+                            modifier = Modifier.padding(horizontal = 15.dp, vertical = 16.dp),
+                            color = Color.White,
+                            fontSize = 16.sp
+                        )
+                    } else {
+                        state.previousTracks.forEachIndexed { index, track ->
+                            PreviousGpxTrackRow(
+                                track = track,
+                                editing = editing,
+                                onShare = { shareGpxTrack(context, repository, track) },
+                                onDelete = { repository.deleteTrack(track.id) }
+                            )
+                            if (index != state.previousTracks.lastIndex) SettingsDivider()
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentGpxTrackRow(
+    track: GpxTrack?,
+    collecting: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (track == null) 52.dp else 70.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                track?.let { formatGpxDate(it.startedAt) } ?: "No active track",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = if (track == null) FontWeight.Normal else FontWeight.SemiBold
+            )
+            track?.let {
+                Text(
+                    "${formatGpxDistance(it.distanceMeters)}, ${it.points.size} points · " +
+                        if (collecting) "recording" else "paused",
+                    color = Color(0xFFB0B0B5),
+                    fontSize = 13.sp
+                )
+            }
+        }
+        Text(
+            if (track == null) "Start" else "Stop",
+            color = if (track == null) Color(0xFF0A84FF) else Color(0xFFFF453A),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun PreviousGpxTrackRow(
+    track: GpxTrack,
+    editing: Boolean,
+    onShare: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(72.dp)
+            .padding(start = 15.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    formatGpxDate(track.startedAt),
+                    modifier = Modifier.weight(1f),
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    formatGpxDuration(track.durationMillis),
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Text(
+                "${formatGpxDistance(track.distanceMeters)}, ${track.points.size} points",
+                color = Color(0xFFB0B0B5),
+                fontSize = 14.sp
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        if (editing) {
+            Surface(
+                onClick = onDelete,
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFFFF453A)
+            ) {
+                Text(
+                    "Delete",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        } else {
+            IconButton(onClick = onShare) {
+                Icon(
+                    Icons.Outlined.Share,
+                    contentDescription = "Share GPX track from ${formatGpxDate(track.startedAt)}",
+                    tint = Color(0xFF0A84FF)
+                )
+            }
+        }
+    }
+}
+
+private fun shareGpxTrack(
+    context: Context,
+    repository: GpxTrackRepository,
+    track: GpxTrack
+) {
+    val file = repository.exportTrack(track)
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/gpx+xml"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share GPX track"))
+}
+
+private val GpxDateFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("M/d/yy, h:mm a", Locale.getDefault())
+
+private fun formatGpxDate(timestamp: Long): String =
+    Instant.ofEpochMilli(timestamp)
+        .atZone(ZoneId.systemDefault())
+        .format(GpxDateFormatter)
+
+private fun formatGpxDistance(distanceMeters: Double): String =
+    "%,.0f meters".format(Locale.getDefault(), distanceMeters)
+
+private fun formatGpxDuration(durationMillis: Long): String {
+    val totalSeconds = durationMillis.coerceAtLeast(0L) / 1_000L
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(Locale.US, hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(Locale.US, minutes, seconds)
     }
 }
 
@@ -2516,6 +2973,70 @@ private fun classFilter(value: String): Expression =
 
 private fun Style.addLayerIfMissing(layer: org.maplibre.android.style.layers.Layer) {
     if (getLayer(layer.id) == null) addLayer(layer)
+}
+
+private fun installGpxLayers(style: Style) {
+    if (style.getSource(GpxPreviousSourceId) == null) {
+        style.addSource(GeoJsonSource(GpxPreviousSourceId, emptyFeatureCollection()))
+    }
+    if (style.getSource(GpxActiveSourceId) == null) {
+        style.addSource(GeoJsonSource(GpxActiveSourceId, emptyFeatureCollection()))
+    }
+    style.addLayerIfMissing(
+        LineLayer(GpxPreviousLayerId, GpxPreviousSourceId).withProperties(
+            lineColor("#FE63F9"),
+            lineWidth(4.5f),
+            lineOpacity(0.96f)
+        )
+    )
+    style.addLayerIfMissing(
+        LineLayer(GpxActiveLayerId, GpxActiveSourceId).withProperties(
+            lineColor("#FF3B30"),
+            lineWidth(5.5f),
+            lineOpacity(1f)
+        )
+    )
+}
+
+private fun syncGpxTracks(
+    style: Style,
+    state: GpxTrackState,
+    visible: Boolean
+) {
+    val previousFeatures = if (visible) {
+        state.previousTracks.mapNotNull(::gpxTrackFeature)
+    } else {
+        emptyList()
+    }
+    val activeFeatures = if (visible) {
+        listOfNotNull(state.activeTrack?.let(::gpxTrackFeature))
+    } else {
+        emptyList()
+    }
+    style.getSourceAs<GeoJsonSource>(GpxPreviousSourceId)?.setGeoJson(
+        if (previousFeatures.isEmpty()) {
+            emptyFeatureCollection()
+        } else {
+            FeatureCollection.fromFeatures(previousFeatures)
+        }
+    )
+    style.getSourceAs<GeoJsonSource>(GpxActiveSourceId)?.setGeoJson(
+        if (activeFeatures.isEmpty()) {
+            emptyFeatureCollection()
+        } else {
+            FeatureCollection.fromFeatures(activeFeatures)
+        }
+    )
+}
+
+private fun gpxTrackFeature(track: GpxTrack): Feature? {
+    val points = track.points.map { point ->
+        Point.fromLngLat(point.longitude, point.latitude)
+    }
+    if (points.size < 2) return null
+    return Feature.fromGeometry(LineString.fromLngLats(points)).apply {
+        addStringProperty("track_id", track.id)
+    }
 }
 
 private fun syncDraftNode(style: Style, state: MapUiState) {

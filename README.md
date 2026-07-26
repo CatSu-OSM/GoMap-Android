@@ -27,6 +27,8 @@ The project preserves the upstream ISC license and attribution.
 - Go Map-inspired Settings sheet opened from the bottom-left gear
 - Go Map-inspired Display sheet with four functional map backgrounds,
   left/right plus-button placement, and a map-rotation toggle
+- Persistent foreground GPX recording with red active lines, `#FE63F9`
+  completed lines, retention settings, deletion, and Android GPX sharing
 - Common Tags and All Tags editor sheets
 - Offline preset catalog generated from iD Tagging Schema, Temaki, Maki, and
   Name Suggestion Index data

@@ -15,6 +15,11 @@ not ready for production OpenStreetMap editing.
   individually scoped row actions, and touch isolation from the map behind it.
 - The map control now opens a Go Map-inspired Display sheet with background,
   overlay, filtering, and interaction sections.
+- GPX Tracks now has a nested management sheet with foreground recording,
+  current/previous track details, retention choices, edit/delete mode, and
+  Android GPX sharing.
+- GPX tracks are persisted locally and rendered as lines on every map
+  background: active recordings are red and completed tracks are `#FE63F9`.
 
 ### Changed
 
@@ -26,9 +31,13 @@ not ready for production OpenStreetMap editing.
   between real MapLibre style and editor-layer combinations.
 - The plus button can move between the right and left sides, and map rotation
   can be enabled or disabled from Display settings.
-- Clear Cache, GPX Tracks, Data Overlays, Quests, Notes and Fixmes, Turn
-  Restrictions, and Object Filters are present for interface parity but remain
-  intentionally inactive until their backing data and storage systems exist.
+- The GPX Tracks switch now controls map visibility independently from its
+  chevron, which opens the track-management sheet.
+- Clear Cache, Data Overlays, Quests, Notes and Fixmes, Turn Restrictions, and
+  Object Filters are present for interface parity but remain intentionally
+  inactive until their backing data and storage systems exist.
+- Background GPX collection remains disabled; active recording pauses whenever
+  the app leaves the foreground.
 
 ### Fixed
 
