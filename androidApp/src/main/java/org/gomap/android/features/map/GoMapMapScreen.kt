@@ -6,6 +6,7 @@ import android.graphics.PointF
 import android.graphics.RectF
 import android.location.LocationManager
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -248,6 +249,7 @@ fun GoMapMapScreen(
     var pendingMovedFeature by remember { mutableStateOf<SelectedFeature?>(null) }
     var mapController by remember { mutableStateOf<MapLibreMap?>(null) }
     var showTagEditor by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     val selectionHitRadiusPx = context.resources.displayMetrics.density * 16f
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -496,7 +498,7 @@ fun GoMapMapScreen(
             ScaleBar(state)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsControl(
-                    onClick = { aerialEnabled = !aerialEnabled }
+                    onClick = { showSettings = true }
                 )
                 MapControl(
                     icon = Icons.Rounded.Search,
@@ -609,6 +611,10 @@ fun GoMapMapScreen(
                     }
                 )
             }
+        }
+
+        if (showSettings) {
+            SettingsSheet(onDismiss = { showSettings = false })
         }
     }
 }
@@ -743,7 +749,11 @@ private fun PlusControl(onClick: () -> Unit) {
 @Composable
 private fun SettingsControl(onClick: () -> Unit) {
     RoundControl(size = 48.dp, onClick = onClick) {
-        Canvas(modifier = Modifier.size(30.dp)) {
+        Canvas(
+            modifier = Modifier
+                .size(30.dp)
+                .semantics { contentDescription = "Open settings" }
+        ) {
             val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
             val innerRadius = size.minDimension * 0.22f
             val ringRadius = size.minDimension * 0.34f
@@ -1153,19 +1163,205 @@ private fun EditorHeaderButton(
     icon: ImageVector,
     description: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    color: Color = Color(0xFF3A3A3C)
 ) {
     Surface(
         onClick = onClick,
         modifier = modifier.size(44.dp),
         shape = CircleShape,
-        color = Color(0xFF3A3A3C),
+        color = color,
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(29.dp))
         }
     }
+}
+
+@Composable
+private fun SettingsSheet(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+
+    fun unavailable(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    BackHandler(onBack = onDismiss)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 58.dp, bottom = 7.dp)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Final).changes.forEach { change ->
+                            if (!change.isConsumed) change.consume()
+                        }
+                    }
+                }
+            },
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(34.dp),
+        shadowElevation = 16.dp
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().height(86.dp)) {
+                Text(
+                    "Settings",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                EditorHeaderButton(
+                    icon = Icons.Rounded.Check,
+                    description = "Close settings",
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+                    color = Color(0xFF0A84FF)
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                SettingsSectionHeader("Credentials")
+                SettingsGroup {
+                    SettingsRow(
+                        title = "OpenStreetMap Login",
+                        value = "Not signed in",
+                        onClick = {
+                            unavailable("OpenStreetMap sign-in is not available in this prerelease.")
+                        }
+                    )
+                }
+
+                SettingsSectionHeader("Presets Language")
+                SettingsGroup {
+                    SettingsRow(
+                        title = "Presets Language",
+                        value = "English",
+                        onClick = {
+                            unavailable("English is currently the only bundled presets language.")
+                        }
+                    )
+                }
+
+                SettingsSectionHeader("Miscellaneous")
+                SettingsGroup {
+                    SettingsRow(
+                        title = "Contact Us",
+                        onClick = { unavailable("Contact options are not available yet.") }
+                    )
+                    SettingsDivider()
+                    SettingsRow(
+                        title = "Nearby Mappers",
+                        onClick = { unavailable("Nearby Mappers is not available yet.") }
+                    )
+                    SettingsDivider()
+                    SettingsRow(
+                        title = "Prepare for Offline",
+                        onClick = { unavailable("Offline preparation is not available yet.") }
+                    )
+                }
+
+                SettingsSectionHeader("Advanced")
+                SettingsGroup {
+                    SettingsRow(
+                        title = "Advanced Settings",
+                        onClick = { unavailable("Advanced settings are not available yet.") }
+                    )
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSectionHeader(title: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .background(Color(0xFF1C1C1E)),
+        contentAlignment = Alignment.BottomStart
+    ) {
+        Text(
+            title,
+            modifier = Modifier.padding(start = 15.dp, bottom = 7.dp),
+            color = Color(0xFF8E8E93),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun SettingsGroup(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF2C2C2E))
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    title: String,
+    value: String? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        value?.let {
+            Text(
+                it,
+                color = Color(0xFF8E8E93),
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = Color(0xFF636366),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 15.dp),
+        thickness = 0.5.dp,
+        color = Color(0xFF48484A)
+    )
 }
 
 @Composable

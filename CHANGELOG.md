@@ -5,6 +5,22 @@ All notable changes to this experimental Android port are documented here.
 The project follows semantic versioning with prerelease identifiers while it is
 not ready for production OpenStreetMap editing.
 
+## [0.1.0-alpha.3] - 2026-07-25
+
+### Added
+
+- The bottom-left gear now opens a Go Map-inspired Settings sheet with
+  credentials, presets language, miscellaneous, and advanced sections.
+- The Settings sheet has a dedicated blue Done control, Android back handling,
+  individually scoped row actions, and touch isolation from the map behind it.
+
+### Changed
+
+- The OpenStreetMap account row accurately reports `Not signed in` until OAuth
+  authentication is implemented.
+- Settings that are not implemented yet now respond with an explicit
+  prerelease notice instead of silently pretending to work.
+
 ## [0.1.0-alpha.2] - 2026-07-25
 
 ### Changed

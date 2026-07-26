@@ -24,6 +24,7 @@ The project preserves the upstream ISC license and attribution.
 - Live whole-object dragging from the four-direction handle, including updates
   to connected way geometry
 - Go Map-inspired selection callouts and action controls
+- Go Map-inspired Settings sheet opened from the bottom-left gear
 - Common Tags and All Tags editor sheets
 - Offline preset catalog generated from iD Tagging Schema, Temaki, Maki, and
   Name Suggestion Index data

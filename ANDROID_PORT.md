@@ -19,6 +19,8 @@ inspired by Go Map!!.
 - Node and whole-way movement with live geometry updates while dragging
 - Geometry highlighting, selection vertices, direction arrows, and object
   callouts
+- Go Map-inspired Settings sheet with credentials, presets language,
+  miscellaneous, and advanced sections
 - Common Tags and All Tags editor sheets
 - iD Tagging Schema presets, Temaki/Maki icons, and US/global Name Suggestion
   Index entries
