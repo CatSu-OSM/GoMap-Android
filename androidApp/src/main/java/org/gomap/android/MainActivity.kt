@@ -72,7 +72,8 @@ class MainActivity : ComponentActivity() {
                     onFeatureTagsChanged = viewModel::updateSelectedFeatureTags,
                     onUndo = viewModel::undo,
                     onRedo = viewModel::redo,
-                    onUpload = viewModel::requestUpload
+                    onUpload = viewModel::requestUpload,
+                    onClearOsmData = viewModel::clearOsmDataAndReload
                 )
             }
         }

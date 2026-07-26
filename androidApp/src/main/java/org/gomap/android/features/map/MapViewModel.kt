@@ -181,6 +181,21 @@ class MapViewModel(
         )
     }
 
+    fun clearOsmDataAndReload() {
+        val current = _uiState.value
+        clearEditHistory()
+        _uiState.value = current.copy(
+            draftNode = null,
+            downloadedData = OsmMapData(),
+            selectedFeature = null,
+            canUndo = false,
+            canRedo = false,
+            isLoading = false,
+            status = "Cleared cached OpenStreetMap data. Refreshing the current viewport..."
+        )
+        loadCurrentViewport()
+    }
+
     fun loadCurrentViewport() {
         val currentState = _uiState.value
         val bounds = currentState.viewportBounds

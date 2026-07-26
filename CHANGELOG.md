@@ -20,6 +20,9 @@ not ready for production OpenStreetMap editing.
   Android GPX sharing.
 - GPX tracks are persisted locally and rendered as lines on every map
   background: active recordings are red and completed tracks are `#FE63F9`.
+- Clear Cache now reports live OSM object, MapLibre tile, and temporary-file
+  counts and sizes, with confirmation before discarding unuploaded edits.
+- Automatic cache management removes temporary files older than seven days.
 
 ### Changed
 
@@ -33,9 +36,11 @@ not ready for production OpenStreetMap editing.
   can be enabled or disabled from Display settings.
 - The GPX Tracks switch now controls map visibility independently from its
   chevron, which opens the track-management sheet.
-- Clear Cache, Data Overlays, Quests, Notes and Fixmes, Turn Restrictions, and
-  Object Filters are present for interface parity but remain intentionally
-  inactive until their backing data and storage systems exist.
+- Clear Cache can discard and refresh loaded OSM data, clear MapLibre's ambient
+  basemap tile cache, or remove temporary app caches without deleting saved GPX
+  track history.
+- Data Overlays, Quests, Notes and Fixmes, Turn Restrictions, and Object Filters
+  remain intentionally inactive until their backing data systems exist.
 - Background GPX collection remains disabled; active recording pauses whenever
   the app leaves the foreground.
 

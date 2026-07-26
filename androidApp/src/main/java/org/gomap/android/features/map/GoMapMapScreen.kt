@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -61,6 +62,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -68,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,6 +112,7 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import org.gomap.android.osm.BoundingBox
 import org.gomap.android.osm.LatLon
@@ -222,7 +226,8 @@ fun GoMapMapScreen(
     onFeatureTagsChanged: (Map<String, String>) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onUpload: () -> Unit
+    onUpload: () -> Unit,
+    onClearOsmData: () -> Unit
 ) {
     val uiState by state.collectAsStateWithLifecycle()
     GoMapMapScreen(
@@ -238,7 +243,8 @@ fun GoMapMapScreen(
         onFeatureTagsChanged = onFeatureTagsChanged,
         onUndo = onUndo,
         onRedo = onRedo,
-        onUpload = onUpload
+        onUpload = onUpload,
+        onClearOsmData = onClearOsmData
     )
 }
 
@@ -256,7 +262,8 @@ fun GoMapMapScreen(
     onFeatureTagsChanged: (Map<String, String>) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onUpload: () -> Unit
+    onUpload: () -> Unit,
+    onClearOsmData: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -283,6 +290,7 @@ fun GoMapMapScreen(
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showDisplay by remember { mutableStateOf(false) }
+    var showClearCache by remember { mutableStateOf(false) }
     var showGpxTracks by remember { mutableStateOf(false) }
     var gpxTracksVisible by remember { mutableStateOf(true) }
     val selectionHitRadiusPx = context.resources.displayMetrics.density * 16f
@@ -719,7 +727,25 @@ fun GoMapMapScreen(
                     showDisplay = false
                     showGpxTracks = true
                 },
+                onOpenClearCache = {
+                    showDisplay = false
+                    showClearCache = true
+                },
                 onDismiss = { showDisplay = false }
+            )
+        }
+
+        if (showClearCache) {
+            ClearCacheSheet(
+                osmObjectCount = state.downloadedData.nodes.size +
+                    state.downloadedData.ways.size +
+                    state.downloadedData.relations.size,
+                hasUnsavedChanges = state.canUndo,
+                onClearOsmData = onClearOsmData,
+                onBack = {
+                    showClearCache = false
+                    showDisplay = true
+                }
             )
         }
 
@@ -1512,6 +1538,7 @@ private fun DisplaySheet(
     onMapRotationChanged: (Boolean) -> Unit,
     onGpxTracksVisibleChanged: (Boolean) -> Unit,
     onOpenGpxTracks: () -> Unit,
+    onOpenClearCache: () -> Unit,
     onDismiss: () -> Unit
 ) {
     BackHandler(onBack = onDismiss)
@@ -1572,7 +1599,10 @@ private fun DisplaySheet(
 
                 SettingsSectionHeader("Reset")
                 SettingsGroup {
-                    DisplayNavigationRow(title = "Clear Cache")
+                    DisplayNavigationRow(
+                        title = "Clear Cache",
+                        onClick = onOpenClearCache
+                    )
                 }
 
                 SettingsSectionHeader("Overlays")
@@ -1617,6 +1647,256 @@ private fun DisplaySheet(
             }
         }
     }
+}
+
+@Composable
+private fun ClearCacheSheet(
+    osmObjectCount: Int,
+    hasUnsavedChanges: Boolean,
+    onClearOsmData: () -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val cacheManager = remember(context) { CacheManager(context) }
+    val scope = rememberCoroutineScope()
+    var automaticCleanup by remember { mutableStateOf(cacheManager.automaticCleanupEnabled) }
+    var basemapStats by remember { mutableStateOf<CacheFileStats?>(null) }
+    var dataCacheStats by remember { mutableStateOf<CacheFileStats?>(null) }
+    var clearingBasemap by remember { mutableStateOf(false) }
+    var clearingData by remember { mutableStateOf(false) }
+    var confirmOsmClear by remember { mutableStateOf(false) }
+    var resultMessage by remember { mutableStateOf<String?>(null) }
+
+    suspend fun refreshStats() {
+        basemapStats = cacheManager.basemapStats()
+        dataCacheStats = cacheManager.dataCacheStats()
+    }
+
+    LaunchedEffect(Unit) {
+        cacheManager.pruneOldDataCaches()
+        refreshStats()
+    }
+    BackHandler(onBack = onBack)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 58.dp, bottom = 7.dp)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Final).changes.forEach { change ->
+                            if (!change.isConsumed) change.consume()
+                        }
+                    }
+                }
+            },
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(34.dp),
+        shadowElevation = 16.dp
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().height(86.dp)) {
+                Text(
+                    "Clear Cache",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                EditorHeaderButton(
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    description = "Back to display options",
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                SettingsSectionHeader("Cache Management")
+                SettingsGroup {
+                    DisplayToggleRow(
+                        title = "Automatic",
+                        checked = automaticCleanup,
+                        onCheckedChange = { enabled ->
+                            automaticCleanup = enabled
+                            cacheManager.automaticCleanupEnabled = enabled
+                            if (enabled) {
+                                scope.launch {
+                                    cacheManager.pruneOldDataCaches()
+                                    refreshStats()
+                                }
+                            }
+                        },
+                        showChevron = false
+                    )
+                }
+                CacheHelpText(
+                    "Go Map!! will automatically discard temporary files older than seven days to optimize performance."
+                )
+
+                SettingsSectionHeader("Discard & Refresh")
+                SettingsGroup {
+                    CacheActionRow(
+                        title = "Clear OSM Data",
+                        detail = "$osmObjectCount ${if (osmObjectCount == 1) "object" else "objects"}",
+                        onClick = { confirmOsmClear = true }
+                    )
+                    SettingsDivider()
+                    CacheActionRow(
+                        title = "Clear Basemap Tiles",
+                        detail = basemapStats.cacheDescription(),
+                        loading = clearingBasemap,
+                        onClick = {
+                            clearingBasemap = true
+                            resultMessage = null
+                            scope.launch {
+                                val result = cacheManager.clearBasemapTiles()
+                                clearingBasemap = false
+                                refreshStats()
+                                resultMessage = result.fold(
+                                    onSuccess = { "Basemap tile cache cleared." },
+                                    onFailure = { it.message ?: "Unable to clear basemap tiles." }
+                                )
+                            }
+                        }
+                    )
+                    SettingsDivider()
+                    CacheActionRow(
+                        title = "Clear Data Caches",
+                        detail = dataCacheStats.cacheDescription(),
+                        loading = clearingData,
+                        onClick = {
+                            clearingData = true
+                            resultMessage = null
+                            scope.launch {
+                                cacheManager.clearDataCaches()
+                                clearingData = false
+                                refreshStats()
+                                resultMessage = "Temporary data caches cleared."
+                            }
+                        }
+                    )
+                }
+
+                resultMessage?.let { message ->
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        color = Color(0xFF0A84FF),
+                        fontSize = 14.sp
+                    )
+                }
+                CacheHelpText(
+                    "Clear the OSM data cache if the application state becomes out of sync with the OSM server. " +
+                        "The current viewport will be downloaded again."
+                )
+                CacheHelpText(
+                    "Warning: Clearing the OSM cache will cause you to lose any changes that have not yet been uploaded."
+                )
+                CacheHelpText(
+                    "Clear the Basemap tile cache to download the latest imagery and map tiles. " +
+                        "Clear Data Caches removes temporary files such as shared exports without deleting saved GPX tracks."
+                )
+                Spacer(Modifier.height(28.dp))
+            }
+        }
+    }
+
+    if (confirmOsmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmOsmClear = false },
+            containerColor = Color(0xFF2C2C2E),
+            titleContentColor = Color.White,
+            textContentColor = Color(0xFFB8B8BD),
+            title = { Text("Clear OSM Data?") },
+            text = {
+                Text(
+                    if (hasUnsavedChanges) {
+                        "This will permanently discard your unuploaded edits, clear the loaded OSM objects, and refresh this viewport."
+                    } else {
+                        "This will clear the loaded OSM objects and download the current viewport again."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmOsmClear = false
+                        onClearOsmData()
+                        resultMessage = "OSM data cleared and refresh started."
+                    }
+                ) {
+                    Text("Clear", color = Color(0xFFFF453A))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmOsmClear = false }) {
+                    Text("Cancel", color = Color(0xFF0A84FF))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun CacheActionRow(
+    title: String,
+    detail: String,
+    loading: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(68.dp)
+            .clickable(enabled = !loading, onClick = onClick)
+            .padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                detail,
+                color = Color(0xFFD1D1D6),
+                fontSize = 15.sp
+            )
+        }
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                color = Color(0xFF0A84FF),
+                strokeWidth = 2.dp
+            )
+        }
+    }
+}
+
+@Composable
+private fun CacheHelpText(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        color = Color(0xFF8E8E93),
+        fontSize = 13.sp,
+        lineHeight = 17.sp
+    )
+}
+
+private fun CacheFileStats?.cacheDescription(): String {
+    val stats = this ?: return "Calculating..."
+    val noun = if (stats.fileCount == 1) "file" else "files"
+    return "${formatCacheBytes(stats.bytes)}, ${stats.fileCount} $noun"
 }
 
 @Composable
