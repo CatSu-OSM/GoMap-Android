@@ -51,6 +51,12 @@ not ready for production OpenStreetMap editing.
 - Compass, location, Display, and plus controls now stay inside Android's
   navigation-bar safe area in landscape instead of being obstructed at the
   right edge.
+- Moving an object no longer rebuilds every downloaded OSM layer for each
+  pointer event; a same-frame editor preview keeps the visible map geometry
+  synchronized exactly with its drag handle and commits the complete geographic
+  data once when released.
+- The custom compass now follows the map's continuous bearing, and location
+  heading animation is rendered at up to 60 frames per second.
 
 ## [0.1.0-alpha.2] - 2026-07-25
 

@@ -286,7 +286,9 @@ fun GoMapMapScreen(
     var selectionCoordinates by remember { mutableStateOf<List<LatLon>>(emptyList()) }
     var selectionAnchor by remember { mutableStateOf<LatLon?>(null) }
     var pendingMovedFeature by remember { mutableStateOf<SelectedFeature?>(null) }
+    var isDraggingFeature by remember { mutableStateOf(false) }
     var mapController by remember { mutableStateOf<MapLibreMap?>(null) }
+    var cameraBearing by remember { mutableStateOf(0f) }
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showDisplay by remember { mutableStateOf(false) }
@@ -338,6 +340,8 @@ fun GoMapMapScreen(
             map.getStyle { style ->
                 syncDraftNode(style, state)
                 syncDownloadedData(style, state.downloadedData)
+                clearDragPreview(style)
+                isDraggingFeature = false
             }
         }
     }
@@ -484,6 +488,7 @@ fun GoMapMapScreen(
                             false
                         }
                         map.addOnCameraMoveListener {
+                            cameraBearing = map.cameraPosition.bearing.toFloat()
                             selectionScreenPoint = selectionAnchor?.let { anchor ->
                                 map.projection.toScreenLocation(LatLng(anchor.latitude, anchor.longitude))
                             }
@@ -493,6 +498,7 @@ fun GoMapMapScreen(
                         }
                         map.addOnCameraIdleListener {
                             val target = map.cameraPosition.target ?: return@addOnCameraIdleListener
+                            cameraBearing = map.cameraPosition.bearing.toFloat()
                             onViewportChanged(
                                 LatLon(target.latitude, target.longitude),
                                 map.cameraPosition.zoom,
@@ -515,7 +521,12 @@ fun GoMapMapScreen(
             state.selectedFeature?.geometry?.type != "point" &&
             selectionScreenGeometry.size >= 2
         ) {
-            SelectionWayHighlight(selectionScreenGeometry)
+            SelectionWayHighlight(
+                points = selectionScreenGeometry,
+                geometryType = state.selectedFeature?.geometry?.type,
+                isRoad = state.selectedFeature?.tags?.containsKey("highway") == true,
+                showEditorPreview = isDraggingFeature
+            )
         }
 
         ImageryBadge(
@@ -540,7 +551,7 @@ fun GoMapMapScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            CompassControl {
+            CompassControl(bearing = cameraBearing) {
                 mapView.getMapAsync { map ->
                     map.animateCamera(CameraUpdateFactory.bearingTo(0.0))
                 }
@@ -622,12 +633,26 @@ fun GoMapMapScreen(
         state.selectedFeature?.takeIf { backgroundMode.showsEditor }?.let { feature ->
             selectionScreenPoint?.let { point ->
                 if (feature.geometry?.type == "point") {
-                    SelectionPointHighlight(point)
+                    SelectionPointHighlight(
+                        point = point,
+                        showEditorPreview = isDraggingFeature
+                    )
                 }
                 SelectionCallout(
                     feature = feature,
                     point = point,
                     screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() },
+                    onMoveStarted = {
+                        val map = mapController ?: return@SelectionCallout
+                        pendingMovedFeature = feature
+                        isDraggingFeature = true
+                        map.style?.let { style ->
+                            hideDraggedFeature(style, feature)
+                            if (feature.kind == "draft") {
+                                syncDraftNode(style, state.copy(draftNode = null))
+                            }
+                        }
+                    },
                     onMove = { dragAmount ->
                         val map = mapController ?: return@SelectionCallout
                         val geometryType = feature.geometry?.type ?: return@SelectionCallout
@@ -648,26 +673,9 @@ fun GoMapMapScreen(
                         selectionCoordinates = movedCoordinates
                         selectionAnchor = movedGeometry.anchor
                         pendingMovedFeature = movedFeature
-                        map.getStyle { style ->
-                            syncDownloadedData(
-                                style,
-                                moveFeatureInData(state.downloadedData, movedFeature)
-                            )
-                            if (movedFeature.kind == "draft") {
-                                val movedDraft = movedCoordinates.firstOrNull()?.let { coordinate ->
-                                    state.draftNode?.copy(
-                                        coordinate = coordinate,
-                                        tags = movedFeature.tags
-                                    )
-                                }
-                                syncDraftNode(style, state.copy(draftNode = movedDraft))
-                            }
-                            syncSelection(style, movedFeature)
-                        }
                     },
                     onMoveFinished = {
                         pendingMovedFeature?.let(onFeatureMoved)
-                        pendingMovedFeature = null
                     }
                 )
             }
@@ -949,11 +957,15 @@ private fun RoundControl(
 }
 
 @Composable
-private fun CompassControl(onClick: () -> Unit) {
+private fun CompassControl(
+    bearing: Float,
+    onClick: () -> Unit
+) {
     RoundControl(size = 52.dp, onClick = onClick) {
         Canvas(
             modifier = Modifier
                 .size(36.dp)
+                .rotate(-bearing)
                 .semantics { contentDescription = "Reset map orientation" }
         ) {
             drawCircle(Color.White.copy(alpha = 0.14f))
@@ -1014,25 +1026,49 @@ private fun ScaleBar(state: MapUiState) {
 }
 
 @Composable
-private fun SelectionWayHighlight(points: List<PointF>) {
-    val strokeWidth = with(LocalDensity.current) { 3.5.dp.toPx() }
+private fun SelectionWayHighlight(
+    points: List<PointF>,
+    geometryType: String?,
+    isRoad: Boolean,
+    showEditorPreview: Boolean
+) {
+    val density = LocalDensity.current
+    val selectionStrokeWidth = with(density) { 3.5.dp.toPx() }
+    val editorStrokeWidth = with(density) { if (isRoad) 6.dp.toPx() else 5.dp.toPx() }
     Canvas(modifier = Modifier.fillMaxSize()) {
         val path = Path().apply {
             moveTo(points.first().x, points.first().y)
             points.drop(1).forEach { point -> lineTo(point.x, point.y) }
+            if (geometryType == "area") close()
+        }
+        if (showEditorPreview) {
+            if (geometryType == "area") {
+                drawPath(
+                    path = path,
+                    color = Color(0x33B86F65)
+                )
+            }
+            drawPath(
+                path = path,
+                color = if (isRoad) Color.White else EditorPink,
+                style = Stroke(width = editorStrokeWidth, cap = StrokeCap.Round)
+            )
         }
         drawPath(
             path = path,
             color = Color(0xFF20F275),
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            style = Stroke(width = selectionStrokeWidth, cap = StrokeCap.Round)
         )
     }
 }
 
 @Composable
-private fun SelectionPointHighlight(point: PointF) {
+private fun SelectionPointHighlight(
+    point: PointF,
+    showEditorPreview: Boolean
+) {
     val density = LocalDensity.current
-    val size = 22.dp
+    val size = if (showEditorPreview) 26.dp else 22.dp
     val halfSizePx = with(density) { size.toPx() / 2f }
     Box(
         modifier = Modifier
@@ -1043,6 +1079,13 @@ private fun SelectionPointHighlight(point: PointF) {
                 )
             }
             .size(size)
+            .then(
+                if (showEditorPreview) {
+                    Modifier.background(EditorPink.copy(alpha = 0.45f), CircleShape)
+                } else {
+                    Modifier
+                }
+            )
             .border(2.dp, Color(0xFF20F275))
     )
 }
@@ -1052,6 +1095,7 @@ private fun SelectionCallout(
     feature: SelectedFeature,
     point: PointF,
     screenWidthPx: Float,
+    onMoveStarted: () -> Unit,
     onMove: (Offset) -> Unit,
     onMoveFinished: () -> Unit
 ) {
@@ -1102,6 +1146,7 @@ private fun SelectionCallout(
                         .size(36.dp)
                         .pointerInput(feature.id) {
                             detectDragGestures(
+                                onDragStart = { onMoveStarted() },
                                 onDragEnd = onMoveFinished,
                                 onDragCancel = onMoveFinished
                             ) { change, dragAmount ->
@@ -3141,6 +3186,7 @@ private fun syncLocationComponent(
         locationComponent.applyStyle(options)
     }
     locationComponent.isLocationComponentEnabled = true
+    locationComponent.setMaxAnimationFps(60)
     locationComponent.renderMode = RenderMode.COMPASS
     bestLastKnownLocation(context)?.let(locationComponent::forceLocationUpdate)
 }
@@ -3377,6 +3423,47 @@ private fun syncSelection(style: Style, selected: SelectedFeature?) {
             }
         )
     )
+}
+
+private fun hideDraggedFeature(style: Style, feature: SelectedFeature) {
+    syncSelection(style, null)
+    if (feature.kind == "draft") return
+
+    val differentElement = Expression.neq(
+        Expression.get("element_id"),
+        Expression.literal(feature.id)
+    )
+    style.getLayerAs<CircleLayer>(DownloadedNodeHaloLayerId)?.setFilter(differentElement)
+    style.getLayerAs<CircleLayer>(DownloadedNodesLayerId)?.setFilter(differentElement)
+    style.getLayerAs<LineLayer>(DownloadedWaysLayerId)?.setFilter(
+        Expression.all(
+            Expression.neq(Expression.get("feature_class"), Expression.literal("road")),
+            differentElement
+        )
+    )
+    style.getLayerAs<LineLayer>(DownloadedRoadCasingLayerId)?.setFilter(
+        Expression.all(classFilter("road"), differentElement)
+    )
+    style.getLayerAs<LineLayer>(DownloadedRoadsLayerId)?.setFilter(
+        Expression.all(classFilter("road"), differentElement)
+    )
+    style.getLayerAs<FillLayer>(DownloadedAreasLayerId)?.setFilter(differentElement)
+    style.getLayerAs<SymbolLayer>(DownloadedLabelsLayerId)?.setFilter(
+        Expression.all(Expression.has("label"), differentElement)
+    )
+}
+
+private fun clearDragPreview(style: Style) {
+    val showAll = Expression.literal(true)
+    style.getLayerAs<CircleLayer>(DownloadedNodeHaloLayerId)?.setFilter(showAll)
+    style.getLayerAs<CircleLayer>(DownloadedNodesLayerId)?.setFilter(showAll)
+    style.getLayerAs<LineLayer>(DownloadedWaysLayerId)?.setFilter(
+        Expression.neq(Expression.get("feature_class"), Expression.literal("road"))
+    )
+    style.getLayerAs<LineLayer>(DownloadedRoadCasingLayerId)?.setFilter(classFilter("road"))
+    style.getLayerAs<LineLayer>(DownloadedRoadsLayerId)?.setFilter(classFilter("road"))
+    style.getLayerAs<FillLayer>(DownloadedAreasLayerId)?.setFilter(showAll)
+    style.getLayerAs<SymbolLayer>(DownloadedLabelsLayerId)?.setFilter(Expression.has("label"))
 }
 
 private fun syncDownloadedData(style: Style, data: OsmMapData) {
