@@ -63,6 +63,10 @@ not ready for production OpenStreetMap editing.
   heading uses a low-latency 20 ms sensor feed with zero batching instead of
   MapLibre's delayed 100 ms compass engine. The cone uses reported heading
   accuracy when available and expands to 180 degrees when confidence is low.
+- The current-location puck and its shortened direction cone are now rendered
+  at the GPS coordinate inside MapLibre, so they remain locked to the map
+  geometry throughout pans and rotations instead of floating in a delayed
+  screen-space overlay.
 
 ## [0.1.0-alpha.2] - 2026-07-25
 

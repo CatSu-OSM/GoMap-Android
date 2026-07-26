@@ -3,8 +3,15 @@ package org.gomap.android.features.map
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Path as AndroidPath
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.location.LocationManager
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.Toast
@@ -76,7 +83,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -110,10 +116,13 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -155,6 +164,12 @@ import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
 import org.maplibre.android.style.layers.PropertyFactory.fillColor
 import org.maplibre.android.style.layers.PropertyFactory.fillOpacity
 import org.maplibre.android.style.layers.PropertyFactory.fillOutlineColor
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconAnchor
+import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
+import org.maplibre.android.style.layers.PropertyFactory.iconRotate
+import org.maplibre.android.style.layers.PropertyFactory.iconRotationAlignment
 import org.maplibre.android.style.layers.PropertyFactory.lineColor
 import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
@@ -201,6 +216,9 @@ private const val GpxPreviousSourceId = "gpx-previous-source"
 private const val GpxPreviousLayerId = "gpx-previous-layer"
 private const val GpxActiveSourceId = "gpx-active-source"
 private const val GpxActiveLayerId = "gpx-active-layer"
+private const val HeadingIndicatorSourceId = "heading-indicator-source"
+private const val HeadingIndicatorLayerId = "heading-indicator-layer"
+private const val HeadingIndicatorPuckImageId = "heading-indicator-puck"
 private val Glass = Color(0xA34E514B)
 private val EditorPink = Color(0xFFFF9A9F)
 
@@ -295,7 +313,6 @@ fun GoMapMapScreen(
     var isDraggingFeature by remember { mutableStateOf(false) }
     var mapController by remember { mutableStateOf<MapLibreMap?>(null) }
     var cameraBearing by remember { mutableStateOf(0f) }
-    var userLocationScreenPoint by remember { mutableStateOf<PointF?>(null) }
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showDisplay by remember { mutableStateOf(false) }
@@ -420,7 +437,6 @@ fun GoMapMapScreen(
         if (!mapReady) return@LaunchedEffect
         if (!hasLocationPermission || !locationTrackingEnabled) {
             headingController.stop()
-            userLocationScreenPoint = null
         } else if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             headingController.start()
         }
@@ -432,15 +448,60 @@ fun GoMapMapScreen(
                     style,
                     hasLocationPermission && locationTrackingEnabled
                 )
+                installHeadingIndicatorLayer(style)
+                syncHeadingIndicator(
+                    context = context,
+                    style = style,
+                    location = map.latestUserLocation(context),
+                    headingState = headingState,
+                    enabled = hasLocationPermission && locationTrackingEnabled
+                )
             }
         }
     }
 
-    LaunchedEffect(mapReady, headingState, locationTrackingEnabled) {
-        if (!mapReady || !locationTrackingEnabled) return@LaunchedEffect
+    LaunchedEffect(mapReady, headingState, hasLocationPermission, locationTrackingEnabled) {
+        if (!mapReady) return@LaunchedEffect
         val map = mapController ?: return@LaunchedEffect
-        userLocationScreenPoint = map.locationComponent.lastKnownLocation?.let { location ->
-            map.projection.toScreenLocation(LatLng(location.latitude, location.longitude))
+        map.style?.let { style ->
+            installHeadingIndicatorLayer(style)
+            syncHeadingIndicator(
+                context = context,
+                style = style,
+                location = map.latestUserLocation(context),
+                headingState = headingState,
+                enabled = hasLocationPermission && locationTrackingEnabled
+            )
+        }
+    }
+
+    LaunchedEffect(mapReady, hasLocationPermission, locationTrackingEnabled) {
+        if (!mapReady || !hasLocationPermission || !locationTrackingEnabled) {
+            return@LaunchedEffect
+        }
+        var previousStyle: Style? = null
+        var previousLatitude: Double? = null
+        var previousLongitude: Double? = null
+        while (isActive) {
+            val map = mapController
+            val style = map?.style
+            val location = map?.latestUserLocation(context)
+            if (
+                style != null &&
+                location != null &&
+                (
+                    style !== previousStyle ||
+                    location.latitude != previousLatitude ||
+                    location.longitude != previousLongitude
+                )
+            ) {
+                installHeadingIndicatorLayer(style)
+                syncHeadingIndicatorLocation(style, location, enabled = true)
+                previousStyle = style
+                previousLatitude = location.latitude
+                previousLongitude = location.longitude
+            }
+            delay(100L)
         }
     }
 
@@ -468,6 +529,14 @@ fun GoMapMapScreen(
                     map,
                     style,
                     hasLocationPermission && locationTrackingEnabled
+                )
+                installHeadingIndicatorLayer(style)
+                syncHeadingIndicator(
+                    context = context,
+                    style = style,
+                    location = map.latestUserLocation(context),
+                    headingState = headingState,
+                    enabled = hasLocationPermission && locationTrackingEnabled
                 )
             }
         }
@@ -512,6 +581,14 @@ fun GoMapMapScreen(
                                 style,
                                 hasLocationPermission && locationTrackingEnabled
                             )
+                            installHeadingIndicatorLayer(style)
+                            syncHeadingIndicator(
+                                context = context,
+                                style = style,
+                                location = map.latestUserLocation(context),
+                                headingState = headingState,
+                                enabled = hasLocationPermission && locationTrackingEnabled
+                            )
                             mapReady = true
                         }
                         map.addOnMapLongClickListener { latLng ->
@@ -534,9 +611,6 @@ fun GoMapMapScreen(
                         }
                         map.addOnCameraMoveListener {
                             cameraBearing = map.cameraPosition.bearing.toFloat()
-                            userLocationScreenPoint = map.locationComponent.lastKnownLocation?.let { location ->
-                                map.projection.toScreenLocation(LatLng(location.latitude, location.longitude))
-                            }
                             selectionScreenPoint = selectionAnchor?.let { anchor ->
                                 map.projection.toScreenLocation(LatLng(anchor.latitude, anchor.longitude))
                             }
@@ -575,18 +649,6 @@ fun GoMapMapScreen(
                 isRoad = state.selectedFeature?.tags?.containsKey("highway") == true,
                 showEditorPreview = isDraggingFeature
             )
-        }
-
-        if (hasLocationPermission && locationTrackingEnabled) {
-            val heading = headingState.headingDegrees
-            val point = userLocationScreenPoint
-            if (heading != null && point != null) {
-                HeadingAccuracyIndicator(
-                    point = point,
-                    headingDegrees = heading - cameraBearing,
-                    accuracyDegrees = headingState.accuracyDegrees
-                )
-            }
         }
 
         ImageryBadge(
@@ -1082,64 +1144,6 @@ private fun ScaleBar(state: MapUiState) {
             drawLine(Color.White, androidx.compose.ui.geometry.Offset(2f, y - 1f), androidx.compose.ui.geometry.Offset(size.width - 2f, y - 1f), 1.5f)
         }
         Text(label, modifier = Modifier.align(Alignment.TopCenter), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun HeadingAccuracyIndicator(
-    point: PointF,
-    headingDegrees: Float,
-    accuracyDegrees: Float
-) {
-    val density = LocalDensity.current
-    val radius = with(density) { 46.dp.toPx() }
-    val puckRadius = with(density) { 6.375.dp.toPx() }
-    val accuracy = accuracyDegrees.coerceIn(8f, 180f)
-    Canvas(
-        modifier = Modifier
-            .fillMaxSize()
-            .semantics {
-                contentDescription =
-                    "Compass heading ${normalizeHeading(headingDegrees).roundToInt()} degrees, " +
-                    "accuracy ${accuracy.roundToInt()} degrees"
-            }
-    ) {
-        val center = Offset(point.x, point.y)
-        val halfAngle = accuracy / 2f
-        val wedge = Path().apply {
-            moveTo(center.x, center.y)
-            for (step in 0..24) {
-                val angle = headingDegrees - halfAngle + accuracy * step / 24f
-                val radians = Math.toRadians(angle.toDouble())
-                lineTo(
-                    center.x + sin(radians).toFloat() * radius,
-                    center.y - cos(radians).toFloat() * radius
-                )
-            }
-            close()
-        }
-        drawPath(
-            path = wedge,
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0xB83F7CF2),
-                    Color(0x653F7CF2),
-                    Color.Transparent
-                ),
-                center = center,
-                radius = radius
-            )
-        )
-        drawCircle(
-            color = Color.White,
-            radius = puckRadius + with(density) { 3.dp.toPx() },
-            center = center
-        )
-        drawCircle(
-            color = Color(0xFF4B7FF0),
-            radius = puckRadius,
-            center = center
-        )
     }
 }
 
@@ -3277,15 +3281,14 @@ private fun syncLocationComponent(
         return
     }
 
-    val blue = android.graphics.Color.rgb(10, 132, 255)
+    val transparent = android.graphics.Color.TRANSPARENT
     val options = LocationComponentOptions.builder(context)
-        .foregroundTintColor(blue)
-        .backgroundTintColor(android.graphics.Color.WHITE)
-        .bearingTintColor(blue)
-        .accuracyColor(blue)
-        .accuracyAlpha(0.20f)
-        .pulseEnabled(true)
-        .pulseColor(blue)
+        .foregroundTintColor(transparent)
+        .backgroundTintColor(transparent)
+        .bearingTintColor(transparent)
+        .accuracyColor(transparent)
+        .accuracyAlpha(0f)
+        .pulseEnabled(false)
         .compassAnimationEnabled(false)
         .build()
 
@@ -3318,6 +3321,143 @@ private fun bestLastKnownLocation(context: Context): android.location.Location? 
             runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
         }
         .maxByOrNull { location -> location.elapsedRealtimeNanos }
+}
+
+@SuppressLint("MissingPermission")
+private fun MapLibreMap.latestUserLocation(context: Context): android.location.Location? =
+    locationComponent.lastKnownLocation ?: bestLastKnownLocation(context)
+
+private fun installHeadingIndicatorLayer(style: Style) {
+    if (style.getSource(HeadingIndicatorSourceId) == null) {
+        style.addSource(GeoJsonSource(HeadingIndicatorSourceId, emptyFeatureCollection()))
+    }
+    style.addLayerIfMissing(
+        SymbolLayer(HeadingIndicatorLayerId, HeadingIndicatorSourceId).withProperties(
+            iconAnchor("center"),
+            iconRotationAlignment("map"),
+            iconAllowOverlap(true),
+            iconIgnorePlacement(true)
+        )
+    )
+}
+
+private fun syncHeadingIndicator(
+    context: Context,
+    style: Style,
+    location: android.location.Location?,
+    headingState: DeviceHeadingState,
+    enabled: Boolean
+) {
+    installHeadingIndicatorLayer(style)
+    if (!enabled) {
+        syncHeadingIndicatorLocation(style, null, enabled = false)
+        return
+    }
+
+    val heading = headingState.headingDegrees
+    val accuracy = headingState.accuracyDegrees.coerceIn(8f, 180f)
+    val imageId = if (heading == null) {
+        HeadingIndicatorPuckImageId
+    } else {
+        "heading-indicator-${accuracy.roundToInt()}"
+    }
+    if (style.getImage(imageId) == null) {
+        style.addImage(
+            imageId,
+            createHeadingIndicatorBitmap(
+                context = context,
+                accuracyDegrees = accuracy,
+                showCone = heading != null
+            )
+        )
+    }
+    style.getLayerAs<SymbolLayer>(HeadingIndicatorLayerId)?.setProperties(
+        iconImage(imageId),
+        iconRotate(normalizeHeading(heading ?: 0f))
+    )
+    syncHeadingIndicatorLocation(style, location, enabled = true)
+}
+
+private fun syncHeadingIndicatorLocation(
+    style: Style,
+    location: android.location.Location?,
+    enabled: Boolean
+) {
+    val source = style.getSourceAs<GeoJsonSource>(HeadingIndicatorSourceId) ?: return
+    if (!enabled || location == null) {
+        source.setGeoJson(emptyFeatureCollection())
+        return
+    }
+    source.setGeoJson(
+        FeatureCollection.fromFeature(
+            Feature.fromGeometry(Point.fromLngLat(location.longitude, location.latitude))
+        )
+    )
+}
+
+private fun createHeadingIndicatorBitmap(
+    context: Context,
+    accuracyDegrees: Float,
+    showCone: Boolean
+): Bitmap {
+    val metrics = context.resources.displayMetrics
+    val density = metrics.density
+    val coneRadius = 41.4f * density
+    val puckRadius = 6.375f * density
+    val whiteBorderRadius = puckRadius + 3f * density
+    val extent = ceil(maxOf(coneRadius, whiteBorderRadius) + 2f * density).toInt()
+    val bitmap = Bitmap.createBitmap(extent * 2, extent * 2, Bitmap.Config.ARGB_8888).apply {
+        setDensity(metrics.densityDpi)
+    }
+    val canvas = AndroidCanvas(bitmap)
+    val center = extent.toFloat()
+
+    if (showCone) {
+        val accuracy = accuracyDegrees.coerceIn(8f, 180f)
+        val halfAngle = accuracy / 2f
+        val wedge = AndroidPath().apply {
+            moveTo(center, center)
+            for (step in 0..24) {
+                val angle = -halfAngle + accuracy * step / 24f
+                val radians = Math.toRadians(angle.toDouble())
+                lineTo(
+                    center + sin(radians).toFloat() * coneRadius,
+                    center - cos(radians).toFloat() * coneRadius
+                )
+            }
+            close()
+        }
+        val conePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            shader = RadialGradient(
+                center,
+                center,
+                coneRadius,
+                intArrayOf(
+                    0xB83F7CF2.toInt(),
+                    0x653F7CF2,
+                    AndroidColor.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.65f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawPath(wedge, conePaint)
+    }
+
+    canvas.drawCircle(
+        center,
+        center,
+        whiteBorderRadius,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.WHITE }
+    )
+    canvas.drawCircle(
+        center,
+        center,
+        puckRadius,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(75, 127, 240) }
+    )
+    return bitmap
 }
 
 private fun installOverlayLayers(style: Style) {
