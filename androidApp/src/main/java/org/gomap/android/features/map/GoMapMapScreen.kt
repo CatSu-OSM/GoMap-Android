@@ -76,6 +76,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -272,6 +273,8 @@ fun GoMapMapScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val gpxRepository = remember { GpxTrackRepository.get(context) }
     val gpxState by gpxRepository.state.collectAsStateWithLifecycle()
+    val headingController = remember(context) { DeviceHeadingController(context) }
+    val headingState by headingController.state.collectAsStateWithLifecycle()
     val mapView = remember {
         MapView(context).apply {
             layoutParams = android.view.ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
@@ -292,6 +295,7 @@ fun GoMapMapScreen(
     var isDraggingFeature by remember { mutableStateOf(false) }
     var mapController by remember { mutableStateOf<MapLibreMap?>(null) }
     var cameraBearing by remember { mutableStateOf(0f) }
+    var userLocationScreenPoint by remember { mutableStateOf<PointF?>(null) }
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showDisplay by remember { mutableStateOf(false) }
@@ -302,17 +306,28 @@ fun GoMapMapScreen(
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
 
-    DisposableEffect(lifecycleOwner, mapView, gpxRepository, hasLocationPermission) {
+    DisposableEffect(
+        lifecycleOwner,
+        mapView,
+        gpxRepository,
+        headingController,
+        hasLocationPermission,
+        locationTrackingEnabled
+    ) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     mapView.onStart()
                     gpxRepository.resumeForegroundCollection(hasLocationPermission)
+                    if (hasLocationPermission && locationTrackingEnabled) {
+                        headingController.start()
+                    }
                 }
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
                 Lifecycle.Event.ON_STOP -> {
                     gpxRepository.pauseForegroundCollection()
+                    headingController.stop()
                     mapView.onStop()
                 }
                 Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
@@ -320,7 +335,17 @@ fun GoMapMapScreen(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        if (
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+            hasLocationPermission &&
+            locationTrackingEnabled
+        ) {
+            headingController.start()
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            headingController.stop()
+        }
     }
 
     LaunchedEffect(mapReady, state.cameraCenter, state.zoom) {
@@ -393,6 +418,12 @@ fun GoMapMapScreen(
 
     LaunchedEffect(mapReady, hasLocationPermission, locationTrackingEnabled) {
         if (!mapReady) return@LaunchedEffect
+        if (!hasLocationPermission || !locationTrackingEnabled) {
+            headingController.stop()
+            userLocationScreenPoint = null
+        } else if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            headingController.start()
+        }
         mapView.getMapAsync { map ->
             map.getStyle { style ->
                 syncLocationComponent(
@@ -402,6 +433,14 @@ fun GoMapMapScreen(
                     hasLocationPermission && locationTrackingEnabled
                 )
             }
+        }
+    }
+
+    LaunchedEffect(mapReady, headingState, locationTrackingEnabled) {
+        if (!mapReady || !locationTrackingEnabled) return@LaunchedEffect
+        val map = mapController ?: return@LaunchedEffect
+        userLocationScreenPoint = map.locationComponent.lastKnownLocation?.let { location ->
+            map.projection.toScreenLocation(LatLng(location.latitude, location.longitude))
         }
     }
 
@@ -495,6 +534,9 @@ fun GoMapMapScreen(
                         }
                         map.addOnCameraMoveListener {
                             cameraBearing = map.cameraPosition.bearing.toFloat()
+                            userLocationScreenPoint = map.locationComponent.lastKnownLocation?.let { location ->
+                                map.projection.toScreenLocation(LatLng(location.latitude, location.longitude))
+                            }
                             selectionScreenPoint = selectionAnchor?.let { anchor ->
                                 map.projection.toScreenLocation(LatLng(anchor.latitude, anchor.longitude))
                             }
@@ -533,6 +575,18 @@ fun GoMapMapScreen(
                 isRoad = state.selectedFeature?.tags?.containsKey("highway") == true,
                 showEditorPreview = isDraggingFeature
             )
+        }
+
+        if (hasLocationPermission && locationTrackingEnabled) {
+            val heading = headingState.headingDegrees
+            val point = userLocationScreenPoint
+            if (heading != null && point != null) {
+                HeadingAccuracyIndicator(
+                    point = point,
+                    headingDegrees = heading - cameraBearing,
+                    accuracyDegrees = headingState.accuracyDegrees
+                )
+            }
         }
 
         ImageryBadge(
@@ -1028,6 +1082,64 @@ private fun ScaleBar(state: MapUiState) {
             drawLine(Color.White, androidx.compose.ui.geometry.Offset(2f, y - 1f), androidx.compose.ui.geometry.Offset(size.width - 2f, y - 1f), 1.5f)
         }
         Text(label, modifier = Modifier.align(Alignment.TopCenter), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun HeadingAccuracyIndicator(
+    point: PointF,
+    headingDegrees: Float,
+    accuracyDegrees: Float
+) {
+    val density = LocalDensity.current
+    val radius = with(density) { 92.dp.toPx() }
+    val puckRadius = with(density) { 10.dp.toPx() }
+    val accuracy = accuracyDegrees.coerceIn(8f, 180f)
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics {
+                contentDescription =
+                    "Compass heading ${normalizeHeading(headingDegrees).roundToInt()} degrees, " +
+                    "accuracy ${accuracy.roundToInt()} degrees"
+            }
+    ) {
+        val center = Offset(point.x, point.y)
+        val halfAngle = accuracy / 2f
+        val wedge = Path().apply {
+            moveTo(center.x, center.y)
+            for (step in 0..24) {
+                val angle = headingDegrees - halfAngle + accuracy * step / 24f
+                val radians = Math.toRadians(angle.toDouble())
+                lineTo(
+                    center.x + sin(radians).toFloat() * radius,
+                    center.y - cos(radians).toFloat() * radius
+                )
+            }
+            close()
+        }
+        drawPath(
+            path = wedge,
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xB83F7CF2),
+                    Color(0x653F7CF2),
+                    Color.Transparent
+                ),
+                center = center,
+                radius = radius
+            )
+        )
+        drawCircle(
+            color = Color.White,
+            radius = puckRadius + with(density) { 3.dp.toPx() },
+            center = center
+        )
+        drawCircle(
+            color = Color(0xFF4B7FF0),
+            radius = puckRadius,
+            center = center
+        )
     }
 }
 
@@ -3174,7 +3286,7 @@ private fun syncLocationComponent(
         .accuracyAlpha(0.20f)
         .pulseEnabled(true)
         .pulseColor(blue)
-        .compassAnimationEnabled(true)
+        .compassAnimationEnabled(false)
         .build()
 
     if (!locationComponent.isLocationComponentActivated) {
@@ -3193,7 +3305,7 @@ private fun syncLocationComponent(
     }
     locationComponent.isLocationComponentEnabled = true
     locationComponent.setMaxAnimationFps(60)
-    locationComponent.renderMode = RenderMode.COMPASS
+    locationComponent.renderMode = RenderMode.NORMAL
     bestLastKnownLocation(context)?.let(locationComponent::forceLocationUpdate)
 }
 

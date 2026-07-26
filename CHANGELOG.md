@@ -23,6 +23,8 @@ not ready for production OpenStreetMap editing.
 - Clear Cache now reports live OSM object, MapLibre tile, and temporary-file
   counts and sizes, with confirmation before discarding unuploaded edits.
 - Automatic cache management removes temporary files older than seven days.
+- The current-location puck now includes a live blue direction-accuracy cone
+  driven directly by Android's rotation-vector sensor.
 
 ### Changed
 
@@ -58,7 +60,9 @@ not ready for production OpenStreetMap editing.
   the updated native geometry has rendered, preventing a flash of the old
   position after release.
 - The custom compass now follows the map's continuous bearing, and location
-  heading animation is rendered at up to 60 frames per second.
+  heading uses a low-latency 20 ms sensor feed with zero batching instead of
+  MapLibre's delayed 100 ms compass engine. The cone uses reported heading
+  accuracy when available and expands to 180 degrees when confidence is low.
 
 ## [0.1.0-alpha.2] - 2026-07-25
 
