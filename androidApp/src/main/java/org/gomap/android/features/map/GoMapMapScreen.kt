@@ -180,6 +180,18 @@ private const val SelectedPointLayerId = "selected-point-layer"
 private val Glass = Color(0xA34E514B)
 private val EditorPink = Color(0xFFFF9A9F)
 
+private enum class MapBackgroundMode(
+    val title: String,
+    val detail: String?,
+    val styleUri: String,
+    val showsEditor: Boolean
+) {
+    EditorWithAerial("Editor with Aerial", null, AerialStyle, true),
+    EditorOnly("Editor only", null, "asset://styles/editor_only_style.json", true),
+    AerialOnly("Aerial only", "Esri", AerialStyle, false),
+    BasemapOnly("Basemap only", "Mapnik", StreetStyle, false)
+}
+
 @Composable
 fun GoMapMapScreen(
     state: StateFlow<MapUiState>,
@@ -239,7 +251,9 @@ fun GoMapMapScreen(
         }
     }
     var mapReady by remember { mutableStateOf(false) }
-    var aerialEnabled by remember { mutableStateOf(true) }
+    var backgroundMode by remember { mutableStateOf(MapBackgroundMode.EditorWithAerial) }
+    var mapRotationEnabled by remember { mutableStateOf(true) }
+    var plusButtonOnRight by remember { mutableStateOf(true) }
     var locationTrackingEnabled by remember { mutableStateOf(hasLocationPermission) }
     var initialViewportRequested by remember { mutableStateOf(false) }
     var selectionScreenPoint by remember { mutableStateOf<PointF?>(null) }
@@ -250,6 +264,7 @@ fun GoMapMapScreen(
     var mapController by remember { mutableStateOf<MapLibreMap?>(null) }
     var showTagEditor by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showDisplay by remember { mutableStateOf(false) }
     val selectionHitRadiusPx = context.resources.displayMetrics.density * 16f
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -331,20 +346,39 @@ fun GoMapMapScreen(
         }
     }
 
-    LaunchedEffect(aerialEnabled) {
+    LaunchedEffect(mapReady, backgroundMode) {
         if (!mapReady) return@LaunchedEffect
+        if (!backgroundMode.showsEditor) {
+            selectionAnchor = null
+            selectionCoordinates = emptyList()
+            selectionScreenPoint = null
+            selectionScreenGeometry = emptyList()
+            onFeatureSelected(null)
+        }
         mapView.getMapAsync { map ->
-            map.setStyle(Style.Builder().fromUri(if (aerialEnabled) AerialStyle else StreetStyle)) { style ->
-                installOverlayLayers(style)
-                syncDraftNode(style, state)
-                syncDownloadedData(style, state.downloadedData)
-                syncSelection(style, state.selectedFeature)
+            map.setStyle(Style.Builder().fromUri(backgroundMode.styleUri)) { style ->
+                if (backgroundMode.showsEditor) {
+                    installOverlayLayers(style)
+                    syncDraftNode(style, state)
+                    syncDownloadedData(style, state.downloadedData)
+                    syncSelection(style, state.selectedFeature)
+                }
                 syncLocationComponent(
                     context,
                     map,
                     style,
                     hasLocationPermission && locationTrackingEnabled
                 )
+            }
+        }
+    }
+
+    LaunchedEffect(mapReady, mapRotationEnabled) {
+        if (!mapReady) return@LaunchedEffect
+        mapView.getMapAsync { map ->
+            map.uiSettings.isRotateGesturesEnabled = mapRotationEnabled
+            if (!mapRotationEnabled && map.cameraPosition.bearing != 0.0) {
+                map.animateCamera(CameraUpdateFactory.bearingTo(0.0))
             }
         }
     }
@@ -423,12 +457,16 @@ fun GoMapMapScreen(
             }
         )
 
-        if (state.selectedFeature?.geometry?.type != "point" && selectionScreenGeometry.size >= 2) {
+        if (
+            backgroundMode.showsEditor &&
+            state.selectedFeature?.geometry?.type != "point" &&
+            selectionScreenGeometry.size >= 2
+        ) {
             SelectionWayHighlight(selectionScreenGeometry)
         }
 
         ImageryBadge(
-            aerialEnabled = aerialEnabled,
+            backgroundMode = backgroundMode,
             modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 10.dp, top = 27.dp)
         )
 
@@ -468,23 +506,25 @@ fun GoMapMapScreen(
             )
         }
 
-        Column(
+        MapControl(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .offset(y = 50.dp)
+                .offset(y = 15.dp)
                 .padding(end = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            MapControl(
-                icon = Icons.Outlined.Map,
-                description = "Toggle aerial imagery",
-                onClick = { aerialEnabled = !aerialEnabled }
-            )
-            PlusControl(
-                onClick = { onMapLongPress(state.cameraCenter) }
-            )
-        }
+            icon = Icons.Outlined.Map,
+            description = "Open display options",
+            onClick = { showDisplay = true }
+        )
+        PlusControl(
+            onClick = { onMapLongPress(state.cameraCenter) },
+            modifier = Modifier
+                .align(if (plusButtonOnRight) Alignment.CenterEnd else Alignment.CenterStart)
+                .offset(y = 80.dp)
+                .padding(
+                    start = if (plusButtonOnRight) 0.dp else 10.dp,
+                    end = if (plusButtonOnRight) 10.dp else 0.dp
+                )
+        )
 
         Crosshair(modifier = Modifier.align(Alignment.Center))
 
@@ -523,7 +563,7 @@ fun GoMapMapScreen(
             )
         }
 
-        state.selectedFeature?.let { feature ->
+        state.selectedFeature?.takeIf { backgroundMode.showsEditor }?.let { feature ->
             selectionScreenPoint?.let { point ->
                 if (feature.geometry?.type == "point") {
                     SelectionPointHighlight(point)
@@ -616,6 +656,18 @@ fun GoMapMapScreen(
         if (showSettings) {
             SettingsSheet(onDismiss = { showSettings = false })
         }
+
+        if (showDisplay) {
+            DisplaySheet(
+                backgroundMode = backgroundMode,
+                plusButtonOnRight = plusButtonOnRight,
+                mapRotationEnabled = mapRotationEnabled,
+                onBackgroundModeChanged = { backgroundMode = it },
+                onPlusButtonSideChanged = { plusButtonOnRight = it },
+                onMapRotationChanged = { mapRotationEnabled = it },
+                onDismiss = { showDisplay = false }
+            )
+        }
     }
 }
 
@@ -644,11 +696,16 @@ private fun String.isActionableError(): Boolean {
 }
 
 @Composable
-private fun ImageryBadge(aerialEnabled: Boolean, modifier: Modifier = Modifier) {
+private fun ImageryBadge(backgroundMode: MapBackgroundMode, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = Color.Transparent) {
         Column(horizontalAlignment = Alignment.Start) {
             Text(
-                text = if (aerialEnabled) "▶ Aerial  Esri  (0.0)" else "▶ OpenStreetMap  (0.0)",
+                text = when (backgroundMode) {
+                    MapBackgroundMode.EditorWithAerial,
+                    MapBackgroundMode.AerialOnly -> "▶ Aerial  Esri  (0.0)"
+                    MapBackgroundMode.EditorOnly -> "▶ Editor  (0.0)"
+                    MapBackgroundMode.BasemapOnly -> "▶ OpenStreetMap  Mapnik  (0.0)"
+                },
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Normal
@@ -733,9 +790,13 @@ private fun NavigationControl(active: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PlusControl(onClick: () -> Unit) {
-    RoundControl(size = 58.dp, onClick = onClick) {
-        Canvas(modifier = Modifier.size(32.dp)) {
+private fun PlusControl(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    RoundControl(size = 58.dp, modifier = modifier, onClick = onClick) {
+        Canvas(
+            modifier = Modifier
+                .size(32.dp)
+                .semantics { contentDescription = "Add point at map center" }
+        ) {
             val centerX = size.width / 2f
             val centerY = size.height / 2f
             drawLine(Color(0x99000000), androidx.compose.ui.geometry.Offset(centerX, 1f), androidx.compose.ui.geometry.Offset(centerX, size.height - 1f), 8f, StrokeCap.Round)
@@ -777,9 +838,14 @@ private fun SettingsControl(onClick: () -> Unit) {
 }
 
 @Composable
-private fun RoundControl(size: Dp, onClick: () -> Unit, content: @Composable () -> Unit) {
+private fun RoundControl(
+    size: Dp,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
     Surface(
-        modifier = Modifier.size(size),
+        modifier = modifier.size(size),
         shape = CircleShape,
         color = Glass,
         shadowElevation = 6.dp,
@@ -1362,6 +1428,256 @@ private fun SettingsDivider() {
         thickness = 0.5.dp,
         color = Color(0xFF48484A)
     )
+}
+
+@Composable
+private fun DisplaySheet(
+    backgroundMode: MapBackgroundMode,
+    plusButtonOnRight: Boolean,
+    mapRotationEnabled: Boolean,
+    onBackgroundModeChanged: (MapBackgroundMode) -> Unit,
+    onPlusButtonSideChanged: (Boolean) -> Unit,
+    onMapRotationChanged: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    BackHandler(onBack = onDismiss)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 58.dp, bottom = 7.dp)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Final).changes.forEach { change ->
+                            if (!change.isConsumed) change.consume()
+                        }
+                    }
+                }
+            },
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(34.dp),
+        shadowElevation = 16.dp
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().height(86.dp)) {
+                Text(
+                    "Display",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                EditorHeaderButton(
+                    icon = Icons.Rounded.Check,
+                    description = "Close display options",
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+                    color = Color(0xFF0A84FF)
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                SettingsSectionHeader("Background")
+                SettingsGroup {
+                    MapBackgroundMode.entries.forEachIndexed { index, mode ->
+                        DisplayChoiceRow(
+                            title = mode.title,
+                            value = mode.detail,
+                            selected = backgroundMode == mode,
+                            onClick = { onBackgroundModeChanged(mode) }
+                        )
+                        if (index != MapBackgroundMode.entries.lastIndex) SettingsDivider()
+                    }
+                }
+
+                SettingsSectionHeader("Reset")
+                SettingsGroup {
+                    DisplayNavigationRow(title = "Clear Cache")
+                }
+
+                SettingsSectionHeader("Overlays")
+                SettingsGroup {
+                    DisplayToggleRow(title = "GPX Tracks", checked = true)
+                    SettingsDivider()
+                    DisplayToggleRow(title = "Data Overlays", checked = false)
+                    SettingsDivider()
+                    DisplayToggleRow(title = "Quests", checked = false)
+                    SettingsDivider()
+                    DisplayToggleRow(title = "Notes and Fixmes", checked = true)
+                    SettingsDivider()
+                    DisplayToggleRow(title = "Turn Restrictions", checked = true)
+                }
+
+                SettingsSectionHeader("Filter Objects")
+                SettingsGroup {
+                    DisplayToggleRow(title = "Object Filters", checked = false)
+                }
+
+                SettingsSectionHeader("Interactions")
+                SettingsGroup {
+                    DisplayNavigationRow(
+                        title = "Position + Button on",
+                        value = if (plusButtonOnRight) "Right" else "Left",
+                        onClick = { onPlusButtonSideChanged(!plusButtonOnRight) }
+                    )
+                    SettingsDivider()
+                    DisplayToggleRow(
+                        title = "Map Rotation",
+                        checked = mapRotationEnabled,
+                        onCheckedChange = onMapRotationChanged,
+                        showChevron = false
+                    )
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DisplayChoiceRow(
+    title: String,
+    value: String?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        value?.let {
+            Text(it, color = Color(0xFF0A84FF), fontSize = 16.sp)
+            Spacer(Modifier.width(8.dp))
+        }
+        if (selected) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = "Selected",
+                tint = Color(0xFF0A84FF),
+                modifier = Modifier.size(24.dp)
+            )
+        } else if (value == null) {
+            Spacer(Modifier.width(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun DisplayNavigationRow(
+    title: String,
+    value: String? = null,
+    onClick: (() -> Unit)? = null
+) {
+    val rowModifier = if (onClick == null) {
+        Modifier.fillMaxWidth().height(52.dp)
+    } else {
+        Modifier.fillMaxWidth().height(52.dp).clickable(onClick = onClick)
+    }
+    Row(
+        modifier = rowModifier.padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        value?.let {
+            Text(it, color = Color(0xFF0A84FF), fontSize = 16.sp)
+            Spacer(Modifier.width(4.dp))
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = Color(0xFF636366),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+@Composable
+private fun DisplayToggleRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)? = null,
+    showChevron: Boolean = true
+) {
+    val rowModifier = if (onCheckedChange == null) {
+        Modifier.fillMaxWidth().height(52.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clickable { onCheckedChange(!checked) }
+    }
+    Row(
+        modifier = rowModifier
+            .semantics {
+                contentDescription = "$title, ${if (checked) "On" else "Off"}"
+            }
+            .padding(horizontal = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        DisplaySwitch(checked = checked)
+        if (showChevron) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = Color(0xFF636366),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DisplaySwitch(checked: Boolean) {
+    Box(
+        modifier = Modifier
+            .width(48.dp)
+            .height(28.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (checked) Color(0xFF30D158) else Color(0xFF636366))
+            .padding(2.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .background(Color.White, CircleShape)
+        )
+    }
 }
 
 @Composable

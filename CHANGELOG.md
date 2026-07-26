@@ -13,6 +13,8 @@ not ready for production OpenStreetMap editing.
   credentials, presets language, miscellaneous, and advanced sections.
 - The Settings sheet has a dedicated blue Done control, Android back handling,
   individually scoped row actions, and touch isolation from the map behind it.
+- The map control now opens a Go Map-inspired Display sheet with background,
+  overlay, filtering, and interaction sections.
 
 ### Changed
 
@@ -20,6 +22,13 @@ not ready for production OpenStreetMap editing.
   authentication is implemented.
 - Settings that are not implemented yet now respond with an explicit
   prerelease notice instead of silently pretending to work.
+- Editor with Aerial, Editor only, Aerial only, and Basemap only now switch
+  between real MapLibre style and editor-layer combinations.
+- The plus button can move between the right and left sides, and map rotation
+  can be enabled or disabled from Display settings.
+- Clear Cache, GPX Tracks, Data Overlays, Quests, Notes and Fixmes, Turn
+  Restrictions, and Object Filters are present for interface parity but remain
+  intentionally inactive until their backing data and storage systems exist.
 
 ## [0.1.0-alpha.2] - 2026-07-25
 

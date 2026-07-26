@@ -1,0 +1,14 @@
+{
+  "version": 8,
+  "name": "Go Map Editor Only",
+  "sources": {},
+  "layers": [
+    {
+      "id": "editor-background",
+      "type": "background",
+      "paint": {
+        "background-color": "#252628"
+      }
+    }
+  ]
+}

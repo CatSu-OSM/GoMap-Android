@@ -21,6 +21,8 @@ inspired by Go Map!!.
   callouts
 - Go Map-inspired Settings sheet with credentials, presets language,
   miscellaneous, and advanced sections
+- Go Map-inspired Display sheet with editor/aerial/basemap combinations,
+  plus-button placement, and rotation controls
 - Common Tags and All Tags editor sheets
 - iD Tagging Schema presets, Temaki/Maki icons, and US/global Name Suggestion
   Index entries

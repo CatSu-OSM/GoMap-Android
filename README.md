@@ -25,6 +25,8 @@ The project preserves the upstream ISC license and attribution.
   to connected way geometry
 - Go Map-inspired selection callouts and action controls
 - Go Map-inspired Settings sheet opened from the bottom-left gear
+- Go Map-inspired Display sheet with four functional map backgrounds,
+  left/right plus-button placement, and a map-rotation toggle
 - Common Tags and All Tags editor sheets
 - Offline preset catalog generated from iD Tagging Schema, Temaki, Maki, and
   Name Suggestion Index data
