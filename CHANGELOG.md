@@ -43,6 +43,9 @@ not ready for production OpenStreetMap editing.
 
 - Draft nodes can be selected again after tapping elsewhere to dismiss their
   selection, including when they overlap downloaded OpenStreetMap geometry.
+- Compass, location, Display, and plus controls now stay inside Android's
+  navigation-bar safe area in landscape instead of being obstructed at the
+  right edge.
 
 ## [0.1.0-alpha.2] - 2026-07-25
 

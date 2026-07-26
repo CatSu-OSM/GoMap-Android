@@ -527,6 +527,7 @@ fun GoMapMapScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(end = 10.dp, top = 40.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -554,6 +555,7 @@ fun GoMapMapScreen(
         MapControl(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
+                .navigationBarsPadding()
                 .offset(y = 15.dp)
                 .padding(end = 10.dp),
             icon = Icons.Outlined.Map,
@@ -564,6 +566,7 @@ fun GoMapMapScreen(
             onClick = { onMapLongPress(state.cameraCenter) },
             modifier = Modifier
                 .align(if (plusButtonOnRight) Alignment.CenterEnd else Alignment.CenterStart)
+                .navigationBarsPadding()
                 .offset(y = 80.dp)
                 .padding(
                     start = if (plusButtonOnRight) 0.dp else 10.dp,
@@ -922,26 +925,30 @@ private fun RoundControl(
 @Composable
 private fun CompassControl(onClick: () -> Unit) {
     RoundControl(size = 52.dp, onClick = onClick) {
-            Canvas(modifier = Modifier.size(36.dp)) {
-                drawCircle(Color.White.copy(alpha = 0.14f))
-                drawCircle(Color.White.copy(alpha = 0.5f), style = Stroke(width = 1.5f))
-                val north = Path().apply {
-                    moveTo(size.width / 2f, 3f)
-                    lineTo(size.width * 0.64f, size.height / 2f)
-                    lineTo(size.width / 2f, size.height * 0.44f)
-                    lineTo(size.width * 0.36f, size.height / 2f)
-                    close()
-                }
-                val south = Path().apply {
-                    moveTo(size.width / 2f, size.height - 3f)
-                    lineTo(size.width * 0.64f, size.height / 2f)
-                    lineTo(size.width / 2f, size.height * 0.56f)
-                    lineTo(size.width * 0.36f, size.height / 2f)
-                    close()
-                }
-                drawPath(north, Color(0xFFFF4B55))
-                drawPath(south, Color.White.copy(alpha = 0.85f))
+        Canvas(
+            modifier = Modifier
+                .size(36.dp)
+                .semantics { contentDescription = "Reset map orientation" }
+        ) {
+            drawCircle(Color.White.copy(alpha = 0.14f))
+            drawCircle(Color.White.copy(alpha = 0.5f), style = Stroke(width = 1.5f))
+            val north = Path().apply {
+                moveTo(size.width / 2f, 3f)
+                lineTo(size.width * 0.64f, size.height / 2f)
+                lineTo(size.width / 2f, size.height * 0.44f)
+                lineTo(size.width * 0.36f, size.height / 2f)
+                close()
             }
+            val south = Path().apply {
+                moveTo(size.width / 2f, size.height - 3f)
+                lineTo(size.width * 0.64f, size.height / 2f)
+                lineTo(size.width / 2f, size.height * 0.56f)
+                lineTo(size.width * 0.36f, size.height / 2f)
+                close()
+            }
+            drawPath(north, Color(0xFFFF4B55))
+            drawPath(south, Color.White.copy(alpha = 0.85f))
+        }
     }
 }
 
